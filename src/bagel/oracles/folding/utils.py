@@ -5,6 +5,7 @@ from io import StringIO
 
 import pandas as pd  # This is necessary because its "unique" method does not sort elements and leaves them as they are
 import numpy as np
+import numpy.typing as npt
 from biotite.structure import AtomArray
 from biotite.structure.io.pdb import PDBFile
 
@@ -13,6 +14,28 @@ from bagel.constants import atom_order, aa_dict
 logger = logging.getLogger(__name__)
 
 aa_dict_3to1 = {v: k for k, v in aa_dict.items()}
+
+
+def validate_array_range(
+    array: npt.NDArray[np.float64], field_name: str, min_val: float = 0, max_val: float = 1
+) -> npt.NDArray[np.float64]:
+    """
+    Validates that an array is a numpy array and its values fall within the specified range.
+
+    Shared by FoldingResult subclasses (ESMFoldResult, BoltzResult) to validate confidence
+    metrics such as pLDDT and pTM.
+
+    Args:
+        array: Array to validate
+        field_name: Name of the field for error messages
+        min_val: Minimum allowed value (inclusive)
+        max_val: Maximum allowed value (inclusive)
+    """
+    if not isinstance(array, np.ndarray):
+        raise ValueError(f'{field_name} must be a numpy array')
+    if not np.all((array >= min_val) & (array <= max_val)):
+        raise ValueError(f'All values in {field_name} must be between {min_val} and {max_val}')
+    return array
 
 
 def sequence_from_atomarray(atoms: AtomArray) -> str:

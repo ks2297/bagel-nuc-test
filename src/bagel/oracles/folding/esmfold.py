@@ -8,7 +8,7 @@ import numpy as np
 import numpy.typing as npt
 from ...chain import Chain
 from ...constants import atom_order
-from .utils import reindex_chains
+from .utils import reindex_chains, validate_array_range
 from pydantic import field_validator
 from .base import FoldingOracle, FoldingResult
 from typing import List, Any, Type
@@ -21,25 +21,6 @@ from biotite.structure import AtomArray
 import logging
 
 logger = logging.getLogger(__name__)
-
-
-def validate_array_range(
-    array: npt.NDArray[np.float64], field_name: str, min_val: float = 0, max_val: float = 1
-) -> npt.NDArray[np.float64]:
-    """
-    Validates that an array is a numpy array and its values fall within the specified range.
-
-    Args:
-        array: Array to validate
-        field_name: Name of the field for error messages
-        min_val: Minimum allowed value (inclusive)
-        max_val: Maximum allowed value (inclusive)
-    """
-    if not isinstance(array, np.ndarray):
-        raise ValueError(f'{field_name} must be a numpy array')
-    if not np.all((array >= min_val) & (array <= max_val)):
-        raise ValueError(f'All values in {field_name} must be between {min_val} and {max_val}')
-    return array
 
 
 class ESMFoldResult(FoldingResult):
@@ -55,14 +36,6 @@ class ESMFoldResult(FoldingResult):
 
     # for ptm: see Zhang Y and Skolnick J (2004). "Scoring function for automated assessment of
     # protein structure template quality". Proteins. 57 (4): 702–710. doi:10.1002/prot.20264
-
-    @classmethod
-    def validate_score_array(cls, array: npt.NDArray[np.float64], field_name: str) -> npt.NDArray[np.float64]:
-        if not isinstance(array, np.ndarray):
-            raise ValueError(f'{field_name} must be a numpy array')
-        if not np.all((array >= 0) & (array <= 1)):
-            raise ValueError(f'All values in {field_name} must be between 0 and 1')
-        return array
 
     @field_validator('local_plddt')
     def validate_local_plddt(cls, v: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
