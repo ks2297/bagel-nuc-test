@@ -18,7 +18,7 @@ from .constants import (
     hydrophobic_residues,
     max_sasa_values,
     probe_radius_water,
-    backbone_atoms,
+    all_backbone_atoms,
     hydropathy_index,
     max_theoretical_sasa_for_residues,
     max_residue_sasa,
@@ -53,7 +53,32 @@ class EnergyTerm(ABC):
     the new residue will be added to the residues for which this term is calculated. In general, a new residue
     inherits all energy terms of one of its neighbours (chosen randomly to be the left or right neighbour),
     if these terms are inheritable.
+
+    Each term declares `supported_molecule_types`: the polymer types it is meaningful for. The default is
+    permissive (protein, dna, rna) for metric/geometry terms; protein-chemistry terms (e.g. hydropathy,
+    hydrophobicity, secondary structure) override it to {'protein'} so attaching them to a nucleic-acid
+    target fails loudly at construction instead of silently producing a meaningless 0 or NaN.
     """
+
+    supported_molecule_types: frozenset[str] = frozenset({'protein', 'dna', 'rna'})
+
+    def _assert_supported_molecule_types(self, residues: list[Residue] | None) -> None:
+        """
+        Guard: the residues this term targets must be of a supported molecule type.
+
+        Only enforced when explicit residues are given. Whole-system terms (residues=None) cannot be
+        checked here because no residue context exists at construction; such protein-chemistry terms
+        self-neutralise to 0 on nucleic acids at compute time rather than corrupting the energy.
+        """
+        if not residues:
+            return
+        present = {residue.molecule_type for residue in residues}
+        unsupported = present - self.supported_molecule_types
+        assert not unsupported, (
+            f'{self.name} supports molecule types {tuple(sorted(self.supported_molecule_types))}, '
+            f'but was given residues of type {tuple(sorted(unsupported))}. This term is not defined for '
+            'those polymers; attach it only to supported chains.'
+        )
 
     def __init__(
         self,
@@ -462,6 +487,8 @@ class HydrophobicEnergy(EnergyTerm):
     atoms that belong to hydrophobic residues (valine, isoleucine, leucine, phenylalanine, methionine, tryptophan).
     """
 
+    supported_molecule_types = frozenset({'protein'})  # protein-chemistry term; undefined for nucleic acids
+
     def __init__(
         self,
         oracle: FoldingOracle,
@@ -526,6 +553,7 @@ class HydrophobicEnergy(EnergyTerm):
         assert 'structure' in self.oracle.result_class.model_fields, (
             'HydrophobicEnergy requires oracle to return structure in result_class'
         )
+        self._assert_supported_molecule_types(residues)
 
     def compute(self, oracles_result: OraclesResultDict) -> tuple[float, float]:
         structure = oracles_result.get_structure(self.oracle)
@@ -565,6 +593,8 @@ class HydropathyEnergy(EnergyTerm):
     Note that this energy term is different from the `HydrophobicEnergy` term, which simply counts the fraction of selected
     atoms that belong to hydrophobic residues (valine, isoleucine, leucine, phenylalanine, methionine, tryptophan).
     """
+
+    supported_molecule_types = frozenset({'protein'})  # protein-chemistry term; undefined for nucleic acids
 
     def __init__(
         self,
@@ -613,6 +643,7 @@ class HydropathyEnergy(EnergyTerm):
         assert 'structure' in self.oracle.result_class.model_fields, (
             'HydropathyEnergy requires oracle to return structure in result_class'
         )
+        self._assert_supported_molecule_types(residues)
 
     def compute(self, oracles_result: OraclesResultDict) -> tuple[float, float]:
         # TODO: optimize this function, as it can be quite slow for large structures due to the for loop over residues.
@@ -983,7 +1014,7 @@ class RingSymmetryEnergy(EnergyTerm):
         structure = oracles_result.get_structure(self.oracle)
         num_groups = len(self.residue_groups)
         centroids = np.zeros(shape=(num_groups, 3))
-        backbone_mask = np.isin(structure.atom_name, backbone_atoms)
+        backbone_mask = np.isin(structure.atom_name, all_backbone_atoms)
 
         for i in range(num_groups):
             symmetry_group_mask = self.get_atom_mask(structure, residue_group_index=i)
@@ -1053,7 +1084,7 @@ class SeparationEnergy(EnergyTerm):
 
     def compute(self, oracles_result: OraclesResultDict) -> tuple[float, float]:
         structure = oracles_result.get_structure(self.oracle)
-        backbone_mask = np.isin(structure.atom_name, backbone_atoms)
+        backbone_mask = np.isin(structure.atom_name, all_backbone_atoms)
         group_1_mask = self.get_atom_mask(structure, residue_group_index=0)
         group_2_mask = self.get_atom_mask(structure, residue_group_index=1)
 
@@ -1263,7 +1294,7 @@ class GlobularEnergy(EnergyTerm):
 
     def compute(self, oracles_result: OraclesResultDict) -> tuple[float, float]:
         structure = oracles_result.get_structure(self.oracle)
-        backbone_mask = np.isin(structure.atom_name, backbone_atoms)
+        backbone_mask = np.isin(structure.atom_name, all_backbone_atoms)
         if len(self.residue_groups) > 0:
             selected_mask = self.get_atom_mask(structure, residue_group_index=0)
         else:
@@ -1337,8 +1368,8 @@ class TemplateMatchEnergy(EnergyTerm):
         structure_atoms = structure[self.get_atom_mask(structure, residue_group_index=0)]
         template_atoms = reorder_atoms_in_template(self.template_atoms)
         if self.backbone_only:
-            structure_atoms = structure_atoms[np.isin(structure_atoms.atom_name, backbone_atoms)]
-            template_atoms = template_atoms[np.isin(template_atoms.atom_name, backbone_atoms)]
+            structure_atoms = structure_atoms[np.isin(structure_atoms.atom_name, all_backbone_atoms)]
+            template_atoms = template_atoms[np.isin(template_atoms.atom_name, all_backbone_atoms)]
         if len(structure_atoms) != len(template_atoms):
             raise ValueError(
                 'Different number of atoms in template and given residues: '
@@ -1370,6 +1401,8 @@ class SecondaryStructureEnergy(EnergyTerm):
     fraction of selected residues with the wrong secondary structure. Secondary structure types include alpha-helix,
     beta-sheet, and coil.
     """
+
+    supported_molecule_types = frozenset({'protein'})  # protein-chemistry term; undefined for nucleic acids
 
     def __init__(
         self,
@@ -1415,6 +1448,7 @@ class SecondaryStructureEnergy(EnergyTerm):
         assert 'structure' in self.oracle.result_class.model_fields, (
             'SecondaryStructureEnergy requires oracle to return structure in result_class'
         )
+        self._assert_supported_molecule_types(residues)
 
     def compute(self, oracles_result: OraclesResultDict) -> tuple[float, float]:
         structure = oracles_result.get_structure(self.oracle)
@@ -1431,6 +1465,8 @@ class EmbeddingsSimilarityEnergy(EnergyTerm):
     Energy terms measuring the cosine similarity between current embeddings and embeddings of a template.
     See paper: Rajendran et al. 2025 - to be published
     """
+
+    supported_molecule_types = frozenset({'protein'})  # ESM-2 embeddings are protein-only
 
     def __init__(
         self,
@@ -1477,6 +1513,7 @@ class EmbeddingsSimilarityEnergy(EnergyTerm):
         assert 'embeddings' in self.oracle.result_class.model_fields, (
             'EmbeddingsSimilarityEnergy requires oracle to return embeddings in result_class'
         )
+        self._assert_supported_molecule_types(residues)
 
     def compute(self, oracles_result: OraclesResultDict) -> tuple[float, float]:
         embeddings = oracles_result.get_embeddings(self.oracle)

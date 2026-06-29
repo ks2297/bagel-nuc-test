@@ -11,7 +11,7 @@ import numpy as np
 # from .folding import FoldingAlgorithm
 from .chain import Chain
 from .system import System
-from .constants import mutation_bias_no_cystein
+from .constants import mutation_bias_no_cystein, mutation_biases
 from dataclasses import dataclass, field
 from typing import Dict, Optional
 from abc import ABC, abstractmethod
@@ -100,6 +100,24 @@ class MutationProtocol(ABC):
         # that the same object is used.
         return np.random.choice(unique_chain_list, p=probability)  # type: ignore
 
+    def _bias_for(self, molecule_type: str) -> Dict[str, float]:
+        """
+        Resolve the substitution bias for a chain's molecule_type.
+
+        Protein uses the configurable `self.mutation_bias` (so existing customisation and the
+        no-cysteine default are preserved byte-for-byte). Nucleic acids draw from the uniform
+        per-type defaults in `mutation_biases`. Keying off the chain's type (not the residue
+        letter) is what lets a single protocol mutate mixed protein/DNA/RNA systems correctly.
+        """
+        if molecule_type == 'protein':
+            return self.mutation_bias
+        bias = mutation_biases.get(molecule_type)
+        assert bias is not None, (
+            f'No mutation bias registered for molecule_type {molecule_type!r}; '
+            f'known types: {tuple(mutation_biases.keys())}'
+        )
+        return bias
+
     def mutate_random_residue(self, chain: Chain) -> Mutation:
         """
         Mutate a random residue on a chain.
@@ -116,10 +134,11 @@ class MutationProtocol(ABC):
         """
         # Choose a residue to mutate
         index = np.random.choice(chain.mutable_residue_indexes)
-        # Choose a new aminoacid
+        # Choose a new monomer from the bias for THIS chain's molecule_type
         current_aa = chain.residues[index].name
-        aa_keys = list(self.mutation_bias.keys())
-        probs = np.array([self.mutation_bias[a] for a in aa_keys], dtype=float)
+        mutation_bias = self._bias_for(chain.molecule_type)
+        aa_keys = list(mutation_bias.keys())
+        probs = np.array([mutation_bias[a] for a in aa_keys], dtype=float)
         if self.exclude_self:  # exclude the current amino acid from the probability distribution
             mask = np.array([a != current_aa for a in aa_keys], dtype=bool)
             probs = probs * mask
@@ -342,8 +361,9 @@ class GrandCanonical(MutationProtocol):
         # Choose where to add the residue
         residue_index = np.random.choice(range(chain.length + 1))
         chain_ID = chain.residues[0].chain_ID
-        # Choose a new aminoacid
-        amino_acid = np.random.choice(list(self.mutation_bias.keys()), p=list(self.mutation_bias.values()))
+        # Choose a new monomer from the bias for THIS chain's molecule_type
+        mutation_bias = self._bias_for(chain.molecule_type)
+        amino_acid = np.random.choice(list(mutation_bias.keys()), p=list(mutation_bias.values()))
         chain.add_residue(index=residue_index, amino_acid=amino_acid)
         # Now you need to decide which energy terms you want to associate to this residue. You do it based on its
         # neighbours. You look within the same chain and the same state and you add the residue to the same energy terms

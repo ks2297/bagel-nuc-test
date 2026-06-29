@@ -31,13 +31,63 @@ aa_dict = {
 }
 
 aminoacids_letters = list(aa_dict.keys())
+
+# {1-letter: 3-letter} nucleotide names, following the PDB Chemical Component Dictionary (CCD).
+# DNA deoxyribonucleotides are prefixed with 'D'; RNA ribonucleotides use the bare base letter.
+dna_dict = {
+    'A': 'DA',  # deoxyadenosine
+    'C': 'DC',  # deoxycytidine
+    'G': 'DG',  # deoxyguanosine
+    'T': 'DT',  # deoxythymidine
+}
+
+rna_dict = {
+    'A': 'A',  # adenosine
+    'C': 'C',  # cytidine
+    'G': 'G',  # guanosine
+    'U': 'U',  # uridine
+}
+
+# Registry of per-molecule-type alphabets. The 'protein' entry IS aa_dict (same object),
+# so the protein path validates and maps three-letter names byte-identically to before.
+# molecule_type tags on Residue/Chain index into this registry to route validation.
+alphabets = {
+    'protein': aa_dict,
+    'dna': dna_dict,
+    'rna': rna_dict,
+}
+
 mutation_bias = {aa: 1.0 / len(aa_dict) for aa in aa_dict.keys()}
 
 mutation_bias_no_cystein = {aa: 1.0 / (len(aa_dict) - 1) if aa != 'C' else 0.0 for aa in aa_dict.keys()}
 
+# Per-molecule-type substitution biases, uniform within each nucleotide alphabet.
+# Mirrors the `alphabets` registry: mutation protocols index this by a chain's molecule_type.
+# The 'protein' entry is the existing no-cysteine default, so protein sampling is unchanged.
+dna_mutation_bias = {base: 1.0 / len(dna_dict) for base in dna_dict.keys()}
+rna_mutation_bias = {base: 1.0 / len(rna_dict) for base in rna_dict.keys()}
+
+mutation_biases = {
+    'protein': mutation_bias_no_cystein,
+    'dna': dna_mutation_bias,
+    'rna': rna_mutation_bias,
+}
+
 hydrophobic_residues = ('VAL', 'ILE', 'LEU', 'PHE', 'MET', 'TRP')
 
-backbone_atoms = ('CA', 'N', 'C')
+backbone_atoms = ('CA', 'N', 'C')  # protein backbone (kept for backwards compatibility)
+
+# Per-molecule-type backbone atom names, used by geometric energy terms (centroid/symmetry/etc).
+# Nucleic-acid backbone follows the phosphodiester trace; the exact atom names should be
+# confirmed against the oracle's AtomArray (step-6 spike, Q2) and tuned if needed.
+protein_backbone_atoms = ('CA', 'N', 'C')
+nucleic_backbone_atoms = ('P', "O5'", "C5'", "C4'", "C3'", "O3'")
+
+# Union over all polymer types. Because protein and nucleic-acid backbone atom names are
+# disjoint, masking a structure with this union selects each residue's correct backbone atoms,
+# regardless of type -- so protein-only structures behave exactly as with `backbone_atoms`,
+# and nucleic-acid (or mixed) structures no longer mask to an empty set.
+all_backbone_atoms = tuple(dict.fromkeys(protein_backbone_atoms + nucleic_backbone_atoms))
 
 angstrom = 1.0  # Units of measure for distances
 nm = 10.0  # nm value in units of measure for distances

@@ -18,7 +18,7 @@ from typing import Self, List
 import pathlib as pl
 from biotite.structure.io.pdb import PDBFile
 from biotite.structure import get_residues
-from .constants import aa_dict
+from .constants import alphabets
 
 
 @dataclass
@@ -27,31 +27,42 @@ class Residue:
     Standard amino acid object.
 
     Attributes:
-        name: Type of the amino acid in one-letter format (upper-cased)
+        name: Type of the monomer in one-letter format (upper-cased)
         chain_ID: ID of the polymer chain this residue belongs to
         index: Internal index of the residue in the chain (0 to len(chain)-1, i.e. 0-indexed)
         mutable: Whether the residue can be mutated
+        molecule_type: Polymer type of the residue: 'protein' (default), 'dna', or 'rna'.
+            Determines which alphabet `name` is validated against.
 
     Examples:
         >>> residue = Residue("A", "X", 0)
         >>> residue.three_letter_name
         'ALA'
+        >>> Residue("A", "X", 0, molecule_type="dna").three_letter_name
+        'DA'
     """
 
     name: str
     chain_ID: str
     index: int
     mutable: bool = True
+    molecule_type: str = 'protein'
 
     def __post_init__(self) -> None:
         """Validation checks for a residue."""
-        assert self.name in aa_dict.keys(), f'Acceptable amino acids are {aa_dict.keys()} name found: {self.name}...'
+        assert self.molecule_type in alphabets, (
+            f'Unknown molecule_type {self.molecule_type!r}; expected one of {tuple(alphabets.keys())}'
+        )
+        alphabet = alphabets[self.molecule_type]
+        assert self.name in alphabet, (
+            f'Acceptable {self.molecule_type} monomers are {tuple(alphabet.keys())}, name found: {self.name}...'
+        )
         assert len(self.chain_ID) < 5, 'chain_ID must be less than 5 characters for compatibility with AtomArrays'
 
     @property
     def three_letter_name(self) -> str:
-        """String representation of amino acid in 3-letters format."""
-        return aa_dict[self.name]
+        """String representation of the monomer in 3-letter (PDB CCD) format."""
+        return alphabets[self.molecule_type][self.name]
 
 
 @dataclass
@@ -72,11 +83,20 @@ class Chain:
         assert all(residue.chain_ID == self.chain_ID for residue in self.residues), (
             'chain_ID must be the same for all residues in the chain'
         )
+        # a chain is a single polymer type: all residues must share one molecule_type
+        assert all(residue.molecule_type == self.residues[0].molecule_type for residue in self.residues), (
+            'molecule_type must be the same for all residues in the chain'
+        )
 
     @property
     def chain_ID(self) -> str:
         """ID of the monomer chain."""
         return self.my_chain_ID
+
+    @property
+    def molecule_type(self) -> str:
+        """Polymer type of the chain ('protein', 'dna', or 'rna'), derived from its residues."""
+        return self.residues[0].molecule_type
 
     @property
     def mutability(self) -> List[bool]:
@@ -110,7 +130,12 @@ class Chain:
 
     @classmethod
     def from_pdb(cls, file_path: str, chain_id: str) -> Self:
-        """Create Chain object from a PDB file string. Residue indices are 0-indexed."""
+        """Create Chain object from a PDB file string. Residue indices are 0-indexed.
+
+        Note: protein-only by contract. Residues are built with the default
+        molecule_type='protein'; loading nucleic-acid structures is deferred
+        (would require a molecule_type argument and NA-aware residue parsing).
+        """
         path = pl.Path(file_path).resolve()
         assert path.is_file() and (path.suffix == '.pdb'), f'Invalid file_path given for {file_path}'
 
@@ -142,9 +167,14 @@ class Chain:
         """Add a Residue of type amino_acid at the position specified by index (0-indexed)."""
         index = index if index >= 0 else len(self.residues) + index
         assert index <= self.length, f'Invalid index for {self.length} length chain'
-        assert amino_acid in aa_dict.keys(), f'Acceptable amino acids are {aa_dict.keys()}'
+        mol_type = self.molecule_type
+        assert amino_acid in alphabets[mol_type], (
+            f'Acceptable {mol_type} monomers are {tuple(alphabets[mol_type].keys())}'
+        )
         chain_ID = self.residues[0].chain_ID
-        self.residues.insert(index, Residue(name=amino_acid, chain_ID=chain_ID, index=index, mutable=True))
+        self.residues.insert(
+            index, Residue(name=amino_acid, chain_ID=chain_ID, index=index, mutable=True, molecule_type=mol_type)
+        )
         for i in range(index + 1, len(self.residues)):
             self.residues[i].index += 1
         # Added consistency check to ensure that the indices are correct
@@ -155,7 +185,10 @@ class Chain:
         """Change identity of Residue at position specified by index to 'amino_acid'"""
         assert -self.length - 1 <= index <= self.length, f'Invalid index for {self.length} length chain'
         assert self.mutability[index] == 1, 'Index of selected Residue is not mutable'
-        assert amino_acid in aa_dict.keys(), f'Acceptable amino acids are {aa_dict.keys()}'
+        mol_type = self.molecule_type
+        assert amino_acid in alphabets[mol_type], (
+            f'Acceptable {mol_type} monomers are {tuple(alphabets[mol_type].keys())}'
+        )
         mutated_residue = self.residues[index]
         mutated_residue.name = amino_acid
         self.residues[index] = mutated_residue

@@ -13,7 +13,7 @@ from dataclasses import dataclass
 
 from .oracles.folding import FoldingOracle, FoldingResult
 from .oracles.base import OraclesResultDict
-from .constants import aa_dict
+from .constants import alphabets
 from copy import deepcopy
 import pathlib as pl
 import numpy as np
@@ -77,30 +77,47 @@ class System:
                 for i, term in enumerate(state.energy_terms):
                     file.write(f'{state.name},{term.name},{term.weight}\n')
 
-    def add_chain(self, sequence: str, mutability: list[int], chain_ID: str, state_index: list[int]) -> None:
+    def add_chain(
+        self,
+        sequence: str,
+        mutability: list[int],
+        chain_ID: str,
+        state_index: list[int],
+        molecule_type: str = 'protein',
+    ) -> None:
         """
         Add a chain to the state.
 
         Parameters
         ----------
         sequence : str
-            amino acid sequence of the chain
+            one-letter sequence of the chain (amino acids, or DNA/RNA bases)
         mutability : list[int]
             list of 0s and 1s indicating if the residue is mutable or not
         chain_index : int
             index of the chain (global, same for all states the chain is part of)
         state_index : int
             index of the state in the system
+        molecule_type : str, default='protein'
+            Polymer type of the chain: 'protein', 'dna', or 'rna'.
         """
         assert len(sequence) == len(mutability), 'sequence and mutability lists must be of the same length'
-        new_chain = Chain(residues=[])  # ? , mutability=[]
-        # First generate the chain one residue at a time
+        assert molecule_type in alphabets, (
+            f'Unknown molecule_type {molecule_type!r}; expected one of {tuple(alphabets.keys())}'
+        )
+        alphabet = alphabets[molecule_type]
+        # Build the residues first, then construct the Chain once. (The previous
+        # `Chain(residues=[])` + append pattern crashed Chain.__post_init__, which
+        # indexes residues[0]; this path was latent/untested. Pre-existing, fixed here.)
+        residues = []
         for i in range(len(sequence)):
-            assert sequence[i] in aa_dict.keys(), 'sequence contains invalid amino acid'
+            assert sequence[i] in alphabet, f'sequence contains invalid {molecule_type} monomer: {sequence[i]}'
             assert mutability[i] in [0, 1], 'mutability list must contain only 0 or 1'
             mutable = True if mutability[i] == 1 else False
-            residue = Residue(name=sequence[i], chain_ID=chain_ID, index=i, mutable=mutable)
-            new_chain.residues.append(residue)
+            residues.append(
+                Residue(name=sequence[i], chain_ID=chain_ID, index=i, mutable=mutable, molecule_type=molecule_type)
+            )
+        new_chain = Chain(residues=residues)
         # Add the chain to the states it is part of
         for st_idx in state_index:
             self.states[st_idx].chains.append(new_chain)
